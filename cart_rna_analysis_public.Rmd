@@ -1,0 +1,834 @@
+
+
+```{r setup}
+    knitr::opts_knit$set(root.dir = normalizePath('/oak/stanford/groups/satpathy/users/shared/evan_cart_11212022/')) 
+```
+
+```{r}
+library(DESeq2)
+library(dplyr)
+library(BuenColors)
+library(ComplexHeatmap)
+library(ChrAccR)
+library(EnhancedVolcano)
+library(tidyverse)
+library(org.Hs.eg.db)
+library(clusterProfiler)
+library(msigdbr)
+```
+
+
+```{r}
+#save.image('./data/rna.RData')
+```
+
+```{r}
+load('./results/star_salmon/deseq2_qc/deseq2.dds.RData')
+# rename 
+# DN55 -> Rep1
+# DN46 -> Rep2
+# DN56 -> Rep3
+
+```
+
+
+
+#load data and visualization
+```{r}
+colnames(dds) %>% gsub('_Rep1','.DN55', .) %>% gsub('_Rep2','.DN46', .) %>%  gsub('_Rep3','.DN56', .) -> colnames(dds)
+colData(dds)$sample <- rownames(colData(dds))
+colData(dds)$Group2 <- colData(dds)$Group2 %>% gsub('Rep1','DN55', .) %>% gsub('Rep2','DN46', .) %>%  gsub('Rep3','DN56', .) 
+colData(dds)$TF <-  colData(dds)$Group1 %>% gsub('\\..*', '', .)
+colData(dds)$ct <- colData(dds)$Group1 %>% gsub('.*\\.', '', .)
+keep_id <- which(rowSums(assay(dds)) > 10)
+dds <- dds[keep_id, ]
+```
+
+```{r}
+library("RColorBrewer")
+library(pheatmap)
+vst <- vst(dds, blind=F)
+vst_mat <- assay(vst)
+vst_cor <- cor(vst_mat)
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(vst_cor, col=colors)
+#ggsave('./tmp3.png', p, height=10, width = 10)
+
+```
+
+```{r}
+plotPCA(vst, intgroup=c('Group2'), ntop=1000)
+plotPCA(vst, intgroup=c('TF'), ntop=1000)
+plotPCA(vst, intgroup=c('ct'), ntop=1000)
+plotPCA(vst, intgroup=c('ct', 'TF'), ntop=1000)
+```
+
+```{r}
+design <- model.matrix(~TF+ct+TF:ct, colData(dds))
+vst_bc <- vst
+assay(vst_bc) <- limma::removeBatchEffect(assay(vst_bc), batch=vst$Group2, design=design)
+
+```
+
+```{r}
+pdf('../plots/EDA_batch_corrected.pdf', width=10, height=8)
+plotPCA(vst_bc, intgroup=c('Group2'), ntop=1000)+ pretty_plot()
+plotPCA(vst_bc, intgroup=c('TF'), ntop=1000)+ pretty_plot()
+plotPCA(vst_bc, intgroup=c('ct'), ntop=1000)+ pretty_plot()
+plotPCA(vst_bc, intgroup=c('ct', 'TF'), ntop=1000)+ pretty_plot()
+dev.off()
+```
+
+
+```{r}
+vst.notcf1 <-  vst[,vst$TF != 'TCF1']
+assay(vst.notcf1) <- limma::removeBatchEffect(assay(vst.notcf1), batch=vst.notcf1$Group2)
+
+
+pdf(file = './plots/All_exTCF1_PCA_DN.pdf', width = 5, height=5)
+plotPCA(vst.notcf1, intgroup=c('Group2'), ntop=1000) + pretty_plot()
+dev.off()
+
+pdf(file = './plots/All_exTCF1_PCA_TF.pdf', width = 5, height=5)
+plotPCA(vst.notcf1, intgroup=c('TF'), ntop=1000) +  pretty_plot()
+dev.off()
+
+pdf(file = './plots/All_exTCF1_PCA_ct.pdf', width = 5, height=5)
+plotPCA(vst.notcf1, intgroup=c('ct'), ntop=1000) +  pretty_plot()
+dev.off()
+```
+
+
+
+
+```{r}
+
+dds$Group1 <- factor(dds$Group1)
+dds$Group2 <- factor(dds$Group2)
+dds$TF <- factor(dds$TF)
+dds$ct <- factor(dds$ct)
+design(dds) <- formula(~Group2+Group1)
+dds <- DESeq(dds)
+
+plotDEgenes(dds, 'DE_CD19', 'FOXO1WT.CD19', 'NGFR.CD19')
+```
+
+
+
+
+```{r}
+dds.CD19 <- dds[,dds$ct == 'CD19'] 
+design(dds.CD19) <- formula(~TF+Group2)
+dds.CD19 <- DESeq(dds.CD19)
+vst.CD19 <- vst(dds.CD19, blind=F)
+assay(vst.CD19) <- limma::removeBatchEffect(assay(vst.CD19), batch=vst.CD19$Group2)
+
+
+pdf(file = '../plots/CD19_PCA_DN.pdf', width = 5, height=5)
+plotPCA(vst.CD19, intgroup=c('Group2'), ntop=1000) + pretty_plot()
+dev.off()
+
+pdf(file = '../plots/CD19_PCA_TF.pdf', width = 5, height=5)
+plotPCA(vst.CD19, intgroup=c('TF'), ntop=1000) +  pretty_plot()
+dev.off()
+
+```
+
+
+```{r}
+vst.CD19.notcf1 <-  vst.CD19[,vst.CD19$TF != 'TCF1']
+assay(vst.CD19.notcf1) <- limma::removeBatchEffect(assay(vst.CD19.notcf1), batch=vst.CD19.notcf1$Group2)
+
+
+pdf(file = './plots/CD19_exTCF1_PCA_DN.pdf', width = 5, height=5)
+plotPCA(vst.CD19.notcf1, intgroup=c('Group2'), ntop=1000) + pretty_plot()
+dev.off()
+
+pdf(file = './plots/CD19_exTCF1_PCA_TF.pdf', width = 5, height=5)
+plotPCA(vst.CD19.notcf1, intgroup=c('TF'), ntop=1000) +  pretty_plot()
+dev.off()
+```
+
+```{r}
+dds.HA <- dds[,dds$ct == 'HA'] 
+design(dds.HA) <- formula(~TF+Group2)
+dds.HA <- DESeq(dds.HA)
+vst.HA <- vst(dds.HA, blind=F)
+assay(vst.HA) <- limma::removeBatchEffect(assay(vst.HA), batch=vst.HA$Group2)
+
+pdf(file = '../plots/HA_PCA_DN.pdf', width = 5, height=5)
+plotPCA(vst.HA, intgroup=c('Group2'), ntop=1000) + pretty_plot()
+dev.off()
+
+pdf(file = '../plots/HA_PCA_TF.pdf', width = 5, height=5)
+plotPCA(vst.HA, intgroup=c('TF'), ntop=1000) +  pretty_plot()
+dev.off()
+
+```
+
+```{r}
+vst.HA.notcf1  <-  vst.HA[,vst.HA$TF != 'TCF1']
+assay(vst.HA.notcf1 ) <- limma::removeBatchEffect(assay(vst.HA.notcf1 ), batch=vst.HA.notcf1 $Group2)
+
+
+pdf(file = './plots/HA_exTCF1_PCA_DN.pdf', width = 5, height=5)
+plotPCA(vst.HA.notcf1 , intgroup=c('Group2'), ntop=1000) + pretty_plot()
+dev.off()
+
+pdf(file = './plots/HA_exTCF1_PCA_TF.pdf', width = 5, height=5)
+plotPCA(vst.HA.notcf1 , intgroup=c('TF'), ntop=1000) +  pretty_plot()
+dev.off()
+```
+
+
+
+##export raw counts
+```{r}
+
+count_table <- counts(dds, normalize=T)
+write.table(count_table, file = '../output/All_sample_count_table_cpm.csv')
+```
+
+
+
+
+```{r}
+
+getGenePCCorr <- function(tmp.vst, PC=1, pos=T,  ntop=100, prefix=NULL){
+
+  tmp.vst.pc <- prcomp(t(assay(tmp.vst)), scale = F, center = T)
+  tmp.sign <- 1
+  prefix.sign <- 'pos'
+  if(!pos){tmp.sign <- -1; prefix.sign<-'neg'}
+  
+  tmp.vst.pc.loadings <- tmp.vst.pc$rotation %>%as_tibble(rownames = "gene")
+  top.cor.genes.df <- tmp.vst.pc.loadings[,c('gene', paste0('PC',PC))] %>% pivot_longer(matches("PC"), names_to = "PC", values_to = "loading") %>% arrange(desc(tmp.sign*loading)) %>% slice(1:ntop)
+  top.cor.genes <- top.cor.genes.df %>%pull(gene) %>% unique()
+
+  
+
+  
+   top.cor.genes.df%>% write.csv(paste0('./output/',prefix,'_top', ntop, '_',prefix.sign,'_PC',PC,'.csv'))
+  
+  pdf(paste0('./plots/',prefix,'_top', ntop, '_',prefix.sign,'_PC',PC,'.pdf'), width=8, height=15)
+  Heatmap(ArchR:::.rowZscores(assay(tmp.vst)[top.cor.genes,]), name = paste0('./plots/',prefix,'_top', ntop, '_',prefix.sign,'_PC',PC), 
+        column_title = NULL, cluster_columns = T, clustering_distance_rows = 'spearman') -> ht
+  draw(ht) 
+  dev.off()
+  
+  tmp.ego <- getGoTermEnrichment.ht(top.cor.genes)
+  plot_dot(tmp.ego, fname=paste0(prefix,'_top', ntop, '_',prefix.sign,'_PC',PC,'_GO'))
+  
+  tmp.ego <- getMsigdbEnrichment.ht(top.cor.genes, category = 'H')
+  plot_dot(tmp.ego, fname=paste0(prefix,'_top', ntop, '_',prefix.sign,'_PC',PC,'_H'))
+ 
+}
+```
+
+```{r}
+getGenePCCorr(vst.notcf1, prefix = 'All.notcf1', ntop = 200, PC=2)
+getGenePCCorr(vst.notcf1, prefix = 'All.notcf1', pos = F, ntop=200, PC=2)
+
+getGenePCCorr(vst.notcf1, prefix = 'All.notcf1', ntop = 100, PC=2)
+getGenePCCorr(vst.notcf1, prefix = 'All.notcf1', pos = F, ntop=100, PC=2)
+```
+
+
+```{r}
+
+for(ntp in c(100, 200)){
+  for(pc in c(1,2)){
+    getGenePCCorr(vst.HA.notcf1, prefix = 'HA.notcf1', ntop = ntp, PC=pc)
+     getGenePCCorr(vst.HA.notcf1, prefix = 'HA.notcf1', ntop = ntp, PC=pc, pos=F)
+  }
+}
+```
+
+
+
+#Plot some volcano plots
+```{r}
+plotDEgenes <- function(dds, prefix, grouping ,group1, group2){
+  res <- results(dds, contrast=c(grouping, group1, group2)) 
+  res <- lfcShrink(dds, contrast=c(grouping, group1, group2), res=res, type='normal') 
+  res.raw <- res
+  res %>% as.data.frame() %>%tibble::rownames_to_column('SYMBOL')%>% dplyr::filter(abs(log2FoldChange) > 0.5 & padj <= 0.05) %>% arrange(desc(log2FoldChange)) %>%tibble::column_to_rownames('SYMBOL')-> res
+  res %>% write.table(file = paste0( './output/',prefix, '_', group1, '_vs_',group2,'_FDR005_Log2FC05.csv'), quote = F, sep=',')
+  
+  
+  EnhancedVolcano(res[which(rownames(res)!='NGFR'),],
+                lab=rownames(res[which(rownames(res)!='NGFR'),]),
+                x='log2FoldChange',
+                y='padj',
+                FCcutoff = 0.5,
+                pCutoff = 1e-2,
+                 title=paste0(group1,'_vs_', group2)) ->p
+  
+  ggsave(paste0( './plots/volcano_',prefix, '_', group1, '_vs_',group2,'_FDR005_Log2FC05.pdf'), p, height = 15, width = 20)
+  return(res)
+}
+```
+
+```{r}
+all.de.list <- list(plotDEgenes(dds, 'DE_all','Group1', 'NGFR.HA', 'NGFR.CD19'))
+cd19.de.list <- lapply(c("FOXO1WT_FOXO13A","FOXO13A_NGFR","FOXO1WT_NGFR","FOXO1WT_TCF1","TCF1_NGFR"), function(n){
+  n <- str_split(n,'_')[[1]]
+  print(n)
+  return(plotDEgenes(dds.CD19,'DE_CD19', 'TF', n[1], n[2]))
+})
+names(cd19.de.list) <- c("FOXO1WT_NGFR","FOXO1WT_TCF1","TCF1_NGFR")
+ha.de.list <- lapply(c("FOXO1WT_NGFR","FOXO1WT_TCF1","TCF1_NGFR"), function(n){
+  n <- str_split(n,'_')[[1]]
+  return(plotDEgenes(dds.HA, 'DE_HA', 'TF', n[1], n[2]))
+})
+names(ha.de.list) <-c("FOXO1WT_NGFR","FOXO1WT_TCF1","TCF1_NGFR")
+```
+
+#venn diagram for de genes
+
+```{r}
+library(ggvenn)
+lapply(names(ha.de.list), function(n){
+  x <- ha.de.list[[n]]
+  x %>% as.data.frame() %>% tibble::rownames_to_column('SYMBOL') %>% dplyr::filter(log2FoldChange < -0.5 & padj < 0.05) %>% pull(SYMBOL) 
+}) -> ha.de.down.gene.list
+names(ha.de.down.gene.list) <- names(ha.de.list)
+
+# pdf('./plots/venn_ha_de_gene_down_ov_foxo13a-foxo1wt-ngfr.pdf', width = 6, height=6)
+# ggvenn(
+#   ha.de.down.gene.list[c("FOXO13A_FOXO1WT", "FOXO13A_NGFR")], 
+#   fill_color = c('#088176', '#C0282E'),
+#   stroke_size = 0.5, set_name_size = 4, fill_alpha = 0.6
+# )
+# dev.off()
+# calculate.overlap(ha.de.down.gene.list[c("FOXO13A_FOXO1WT", "FOXO13A_NGFR")]) -> tmp 
+# lapply(names(tmp), function(n){
+#   x <- tmp[[n]]
+#   x %>% write.table(paste0('./output/ha.de.down.gene.venn_foxo13a-foxo1wt-ngfr_', n, '_geneN_',length(x),'.csv'), row.names = F, col.names = F, quote = F)
+#   ego <- enrichGO(gene         = bitr(tmp[[n]], fromType = "SYMBOL", toType= "ENTREZID", OrgDb = org.Hs.eg.db) %>% pull(ENTREZID),
+#                   OrgDb         = org.Hs.eg.db,
+#                   keyType       = 'ENTREZID',
+#                   ont           = "BP",
+#                   pAdjustMethod = "BH",
+#                   pvalueCutoff  = 0.05)
+#   plot_dot(ego, fname=paste0('ha.de.down.gene.venn_foxo13a-foxo1wt-ngfr_GO_', n, '_geneN_',length(x)))
+# })
+lapply(names(cd19.de.list), function(n){
+  x <- cd19.de.list[[n]]
+  x %>% as.data.frame() %>% tibble::rownames_to_column('SYMBOL') %>% dplyr::filter(log2FoldChange < -0.5 & padj < 0.05) %>% pull(SYMBOL) 
+}) -> cd19.de.down.gene.list
+names(cd19.de.down.gene.list) <- names(cd19.de.list)
+
+# pdf('./plots/venn_cd19_de_gene_down_ov_foxo13a-foxo1wt-ngfr.pdf', width = 6, height=6)
+# ggvenn(
+#   cd19.de.down.gene.list[c("FOXO1WT_FOXO13A", "FOXO13A_NGFR")],
+#   fill_color = c('#088176', '#C0282E'),
+#   stroke_size = 0.5, set_name_size = 4, fill_alpha = 0.6
+# )
+# dev.off()
+
+# calculate.overlap(cd19.de.down.gene.list[c("FOXO13A_FOXO1WT", "FOXO13A_NGFR")]) -> tmp 
+# lapply(names(tmp), function(n){
+#   x <- tmp[[n]]
+#   x %>% write.table(paste0('./output/cd19.de.down.gene.venn_foxo13a-foxo1wt-ngfr_', n, '_geneN_',length(x),'.csv'), row.names = F, col.names = F, quote = F)
+#   ego <- enrichGO(gene         = bitr(tmp[[n]], fromType = "SYMBOL", toType= "ENTREZID", OrgDb = org.Hs.eg.db) %>% pull(ENTREZID),
+#                   OrgDb         = org.Hs.eg.db,
+#                   keyType       = 'ENTREZID',
+#                   ont           = "BP",
+#                   pAdjustMethod = "BH",
+#                   pvalueCutoff  = 0.05)
+#   plot_dot(ego, fname=paste0('cd19.de.down.gene.venn_foxo13a-foxo1wt-ngfr_GO_', n, '_geneN_',length(x)))
+# })
+```
+
+
+```{r}
+getVennSets <- function(de.list, g1, g2, prefix=NULL, pos=T, log2fc=0.5, p.adj=0.05){
+  prefix.sign <- 'up'
+  if(!pos) {prefix.sign <- 'down'}
+  
+  
+  tmp.list <- de.list[c(g1, g2)]
+  lapply(tmp.list, function(x){
+    if(pos){ return(x %>% as.data.frame() %>% tibble::rownames_to_column('SYMBOL') %>% dplyr::filter(log2FoldChange > log2fc & padj < p.adj) %>% pull(SYMBOL) )}
+    else{return(x %>% as.data.frame() %>% tibble::rownames_to_column('SYMBOL') %>% dplyr::filter(log2FoldChange < -log2fc & padj < p.adj) %>% pull(SYMBOL))}
+  }) -> tmp.gene.list 
+  names(tmp.gene.list) <- names(tmp.list)
+  
+  ggvenn(
+    tmp.gene.list,
+    fill_color = c('#088176', '#C0282E'),
+    stroke_size = 0.5, set_name_size = 4, fill_alpha = 0.6
+  ) -> p
+  ggsave(paste0('./plots/',prefix,'_',g1,'_',g2, '_', prefix.sign,'.pdf'), p, width = 6, height = 4)
+  
+  tmp.venn <- venndetail(tmp.gene.list)
+  split(tmp.venn@result$Detail, tmp.venn@result$Subset) -> tmp.group.gene
+  
+  lapply(names(tmp.group.gene), function(n){
+    tmp.group.gene[[n]] %>% write.table(paste0('./output/',prefix,'_',g1,'_',g2,'_unique_',n, '_', prefix.sign, '_genes.csv'), row.names = F, col.names = F, quote = F)
+    tmp.ego <- getGoTermEnrichment.ht(tmp.group.gene[[n]])
+    plot_dot(tmp.ego, fname=paste0(prefix,'_',g1,'_',g2,'_unique_',n, '_', prefix.sign, '_GO'))
+    tmp.ego  <- getMsigdbEnrichment.ht(tmp.group.gene[[n]], category = 'H')
+    plot_dot(tmp.ego, fname=paste0(prefix,'_',g1,'_',g2,'_unique_',n, '_', prefix.sign, '_H'))
+  })
+}
+```
+
+
+```{r}
+#up
+getVennSets(ha.de.list, "FOXO1WT_NGFR", "FOXO13A_NGFR", prefix = 'venn_ha_de')
+#down
+getVennSets(ha.de.list, "FOXO1WT_NGFR", "FOXO13A_NGFR", prefix = 'venn_ha_de', pos = F)
+
+#up
+getVennSets(cd19.de.list, "FOXO1WT_NGFR", "FOXO13A_NGFR", prefix = 'venn_cd19_de')
+#down
+getVennSets(cd19.de.list, "FOXO1WT_NGFR", "FOXO13A_NGFR", prefix = 'venn_cd19_de', pos = F)
+```
+
+#fgsea from msigdb
+##functions
+```{r}
+library(msigdbr)
+hallmark_gene_sets <- msigdbr::msigdbr(
+  species = "Homo sapiens", # Can change this to what species you need
+  category = "H" # Only hallmark gene sets
+)
+split(hallmark_gene_sets$gene_symbol, hallmark_gene_sets$gs_name) -> hallmark_gene_sets.list
+
+getGSEA <- function(res, pathways.hallmark){
+  res %>% as.data.frame() %>% rownames_to_column('SYMBOL') %>% dplyr::select(SYMBOL, stat) %>% 
+  na.omit(stat) %>% 
+  distinct() -> res
+  ranks <- deframe(res)
+  
+  fgseaRes <- fgsea::fgsea(pathways=pathways.hallmark, stats=ranks, nperm=1000)
+  fgseaResTidy <- fgseaRes %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+
+  # Show in a nice table:
+  fgseaResTidy %>% 
+  dplyr::select(-leadingEdge, -ES, -nMoreExtreme) %>% 
+  arrange(padj) %>% 
+  DT::datatable()
+  
+
+}
+
+
+getGoTermEnrichment <- function(res, pos=T, fc=0.5){
+  res %>% as.data.frame() -> res
+  if(pos){
+      gene.df <- bitr(rownames(res %>% dplyr::filter(log2FoldChange>fc & padj <= 0.05)), fromType = "SYMBOL", toType= "ENTREZID", OrgDb = org.Hs.eg.db)
+  }else{
+        gene.df <- bitr(rownames(res %>% dplyr::filter(log2FoldChange< -fc & padj <= 0.05)), fromType = "SYMBOL", toType= "ENTREZID", OrgDb = org.Hs.eg.db)
+  }
+  
+  ego <- enrichGO(gene         = gene.df$ENTREZID,
+                OrgDb         = org.Hs.eg.db,
+                keyType       = 'ENTREZID',
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.05)
+
+   return(ego)
+}
+
+
+getKEGGTermEnrichment <- function(res, pos=T, fc=0.5,kegg_pcutoff=0.05){
+  res %>% as.data.frame() -> res
+  if(pos){
+      gene.df <- bitr(rownames(res %>% dplyr::filter(log2FoldChange>fc & padj <= 0.05)), fromType = "SYMBOL", toType= "ENTREZID", OrgDb = org.Hs.eg.db)
+  }else{
+        gene.df <- bitr(rownames(res %>% dplyr::filter(log2FoldChange< -fc & padj <= 0.05)), fromType = "SYMBOL", toType= "ENTREZID", OrgDb = org.Hs.eg.db)
+  }
+  
+  kk <-  enrichKEGG(gene = gene.df$ENTREZID,
+                 organism     = 'hsa',
+                 pvalueCutoff = kegg_pcutoff)
+  
+  return(kk)
+}
+
+plot_dot <- function(ego, top_n=20, fname=NULL){
+  dot_df <- ego@result %>% dplyr::arrange(p.adjust) %>% slice_head(n=top_n)
+  if(nrow(dot_df)>0){
+    dot_df$GeneRatio <-lapply(dot_df$GeneRatio, function(eq){eval(parse(text=eq))}) %>% unlist()
+   
+    p <- ggplot(dot_df, aes(x = -log10(p.adjust), y = fct_reorder(Description, -log10(p.adjust)))) + 
+                 geom_point(aes(size = GeneRatio, color =p.adjust)) +
+                 theme_bw(base_size = 14) +
+          scale_colour_gradient(limits=c(min(dot_df[['p.adjust']]),max(dot_df[['p.adjust']])), low="red", high='blue') +
+          ylab(NULL) +
+          ggtitle("Pathway enrichment")
+    dot_df$geneSYMBOL <- lapply(dot_df$geneID,function(x){ x%>% str_split( '/') %>% unlist() %>% bitr(fromType = "ENTREZID", toType = 'SYMBOL', OrgDb = org.Hs.eg.db) %>% pull(SYMBOL) %>% paste0(collapse = '/')}) %>% unlist()  
+    dot_df %>% write.csv(paste0('./output/', fname,'.csv'), row.names = F, quote = F)
+    ggsave(paste0('./plots/', fname,'.pdf'), p,height=10, width = 15)
+  }
+}
+```
+
+##go term enrichment
+```{r}
+#plot up/down
+
+lapply(names(ha.de.list), function(n){
+  print(n)
+  #ego <- getGoTermEnrichment(ha.de.list[[n]], pos = T, fc=0.5)
+  #plot_dot(ego, fname=paste0('ha.de.up.GO_',n))
+  #kk <- getKEGGTermEnrichment(ha.de.list[[n]], pos=T, fc=0.5)
+  # plot_dot(kk,fname=paste0('ha.de.up.KEGG_',n))
+  
+}) 
+
+lapply(names(ha.de.list), function(n){
+  print(n)
+  ego <- getGoTermEnrichment(ha.de.list[[n]], pos = F, fc=0.5)
+  plot_dot(ego, fname=paste0('ha.de.dwon.GO_',n))
+  # kk <- getKEGGTermEnrichment(ha.de.list[[n]], pos=F, fc=0.5)
+  # plot_dot(kk,fname=paste0('ha.de.down.KEGG_',n))
+}) 
+
+#plot up/down
+
+lapply(names(cd19.de.list), function(n){
+  print(n)
+  ego <- getGoTermEnrichment(cd19.de.list[[n]], pos = T, fc=0.5)
+  plot_dot(ego, fname=paste0('cd19.de.up.GO_',n))
+  #   kk <- getKEGGTermEnrichment(cd19.de.list[[n]], pos=T, fc=0.5)
+  # plot_dot(kk,fname=paste0('cd19.de.up.KEGG_',n))
+}) 
+
+lapply(names(cd19.de.list), function(n){
+  print(n)
+  ego <- getGoTermEnrichment(cd19.de.list[[n]], pos = F, fc=0.5)
+  plot_dot(ego, fname=paste0('cd19.de.down.GO_',n))
+
+  #    kk <- getKEGGTermEnrichment(cd19.de.list[[n]], pos=F, fc=0.5)
+  # plot_dot(kk,fname=paste0('cd19.de.down.KEGG_',n))
+}) 
+
+
+
+```
+
+
+#GSVA enrichment
+```{r}
+library(GSVA)
+#tcell.markers <- readRDS('/oak/stanford/groups/satpathy/users/shared/evan_cart_11212022/data/zhang_TIL_diff_genes.rds')
+tcell.markers <- readRDS('/oak/stanford/groups/satpathy/users/shared/evan_cart_11212022/data/human_cd8_diff_genes.rds')
+#tcell.markers.pos <- tcell.markers %>% dplyr::filter(avg_log2FC>=0.5 & p_val_adj <= 0.05 & cluster %in% c('Tn', 'Tex_TCF7', 'Tem', 'Trm', 'Tex')) 
+tcell.markers.pos <- tcell.markers %>% dplyr::filter(avg_log2FC>=0.5 & p_val_adj <= 0.05 & cluster %in% c('CD8.NaiveLike', 'CD8.TPEX', 'CD8.TEX', 'CD8.CM', 'CD8.EM')) 
+tcell.marker.list <- split(tcell.markers.pos$gene, tcell.markers.pos$cluster)
+
+
+getEnrichmentScore <- function(dds, gene_list){
+  rlg <- vst(dds, blind=F)
+  assay(rlg) <- limma::removeBatchEffect(assay(rlg), batch=dds$Group2)
+  assay(rlg) %>% as.data.frame() %>% tibble::rownames_to_column('gene_name') -> rlg.df
+  gene_means <- rowMeans(rlg.df %>% dplyr::select(-gene_name))
+  rlg.df %>% mutate(gene_means=gene_means) %>% dplyr::select(gene_name, gene_means, dplyr::everything()) %>% dplyr::arrange(dplyr::desc(gene_means)) %>% dplyr::distinct(gene_name, .keep_all = TRUE) %>% dplyr::select( -gene_means) %>%   tibble::column_to_rownames('gene_name') %>% as.matrix() -> rlg.mat
+  gsva_results <- gsva(
+  rlg.mat,
+  gene_list,
+  method = "ssgsea",
+  # Appropriate for our vst transformed data
+  kcdf = "Gaussian",
+  # Minimum gene set size
+  min.sz = 15,
+  # Maximum gene set size
+  # Compute Gaussian-distributed scores
+  # Don't print out the progress bar
+  verbose = FALSE
+  )
+  
+  gsva_results %>% as.data.frame() %>% t() %>% melt() %>% mutate(group=gsub('.DN.*','',Var1))-> gsva_results
+  return(gsva_results)
+}
+
+```
+
+```{r}
+gsva.CD19 <- getEnrichmentScore(dds.CD19, tcell.marker.list)
+gsva.CD19$Var2 <- factor(gsva.CD19$Var2, levels = c('CD8.NaiveLike', 'CD8.CM', 'CD8.EM', 'CD8.TPEX', 'CD8.TEX'))
+gsva.CD19 %>% dplyr::filter(Var2 %in% c('CD8.NaiveLike', 'CD8.TPEX', 'CD8.TEX')) -> gsva.CD19
+gsva.CD19$group <- factor(gsva.CD19$group, levels=paste0(c('NGFR', 'TCF1', 'FOXO1WT'),'.CD19'))
+gsva.CD19 %>% ggplot(aes(x=Var2, y=value, fill=Var2)) + geom_boxplot() + facet_grid(~group) + pretty_plot() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))->p
+ggsave('./plots/gsva.cd19.bc.pdf', p, width=8, height=6)
+
+
+gsva.CD19 %>% write.csv('./output/gsva.cd19.enrichment.csv', quote = F, row.names = F)
+```
+
+```{r}
+gsva.HA <- getEnrichmentScore(dds.HA, tcell.marker.list[c(1,5,6)])
+gsva.HA$Var2 <- factor(gsva.HA$Var2, levels = c('CD8.NaiveLike', 'CD8.CM', 'CD8.EM', 'CD8.TPEX', 'CD8.TEX'))
+gsva.HA %>% dplyr::filter(Var2 %in% c('CD8.NaiveLike', 'CD8.TPEX', 'CD8.TEX')) -> gsva.HA
+gsva.HA$group <- factor(gsva.HA$group, levels=paste0(c('NGFR', 'TCF1', 'FOXO1WT'),'.HA'))
+gsva.HA %>% ggplot(aes(x=Var2, y=value, fill=Var2)) + geom_boxplot() + facet_grid(~group) + pretty_plot() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))->p
+ggsave('./plots/gsva.ha.bc.pdf', p, width=8, height=6)
+gsva.HA %>% write.csv('./output/gsva.ha.enrichment.csv', quote = F, row.names = F)
+```
+
+#plot heatmap
+```{r}
+pdf('./plots/heatmap_cd19_no13a_diff_rna_log2fc05.pdf', width=6, height=14)
+plotDeRNAHeatmap(dds.CD19, 'TF', c('TCF1', 'FOXO1WT'), 'NGFR', fdr=0.05, log2fc = 0.5, km=3) -> plot.genes.cd19.list
+dev.off()
+print_group_genes(plot.genes.cd19.list, 'cd19_no13a_heatmap_gene_') -> cd19.ht.group.gene.list
+
+pdf('./plots/heatmap_ha_no13a_diff_rna_log2fc05.pdf', width=6, height=14)
+plotDeRNAHeatmap(dds.HA, 'TF', c('TCF1', 'FOXO1WT'), 'NGFR', fdr=0.05, log2fc = 0.5, km=3) -> plot.genes.ha.list
+dev.off()
+print_group_genes(plot.genes.ha.list, 'ha_no13a_heatmap_gene_') ->  ha.ht.group.gene.list
+
+print_group_genes <- function(plot.list, fname=NULL){
+  r.dend.rna <-  row_dend(plot.list$ht)
+  rcl.list.rna <- row_order(plot.list$ht)
+  ht.rna.de <- plot.list$unionRNA
+  rcl.list.rna <- lapply(rcl.list.rna, function(x){ht.rna.de[x]})
+  names(rcl.list.rna) <- paste0('group_', 1:length(rcl.list.rna))
+  lapply(names(rcl.list.rna), function(n){
+    x <- rcl.list.rna[[n]]
+    x %>% as.data.frame() %>% write.csv(paste0('./output/',fname, n,'.csv'), row.names = F, col.names = T, quote = F)
+  })
+  return(rcl.list.rna)
+}
+
+
+getGoTermEnrichment.ht <- function(gene_list){
+  gene.df <- bitr(gene_list, fromType = "SYMBOL", toType= "ENTREZID", OrgDb = org.Hs.eg.db)
+
+  ego <- enrichGO(gene         = gene.df$ENTREZID,
+                OrgDb         = org.Hs.eg.db,
+                keyType       = 'ENTREZID',
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.05)
+  
+  return(ego)
+}
+
+
+
+getKEGGTermEnrichment.ht <- function(gene_list){
+  gene.df <- bitr(gene_list, fromType = "SYMBOL", toType= "ENTREZID", OrgDb = org.Hs.eg.db)
+
+  kk <- enrichKEGG(gene = gene.df$ENTREZID,
+               organism='hsa',
+               pvalueCutoff = 0.05, use_internal_data = F)
+  
+  return(kk)
+}
+
+
+
+lapply(names(cd19.ht.group.gene.list), function(n){
+  x <- cd19.ht.group.gene.list[[n]]
+  # ego.tmp <- getGoTermEnrichment.ht(gene_list = x)
+  # plot_dot(ego.tmp, top_n =20, fname=paste0('cd19_no13a_heatmap_group_gene_GO_', n))
+  # 
+  kk.tmp <- getKEGGTermEnrichment.ht(gene_list = x)
+  plot_dot(kk.tmp, top_n =20, fname=paste0('cd19_no13a_heatmap_group_gene_KEGG_', n))
+})
+
+lapply(names(ha.ht.group.gene.list), function(n){
+  x <- ha.ht.group.gene.list[[n]]
+  # ego.tmp <- getGoTermEnrichment.ht(gene_list = x)
+  # plot_dot(ego.tmp, top_n =20, fname=paste0('ha_no13a_heatmap_group_gene_GO_', n))
+  # 
+  kk.tmp <- getKEGGTermEnrichment.ht(gene_list = x)
+  plot_dot(kk.tmp, top_n =20, fname=paste0('ha_no13a_heatmap_group_gene_KEGG_', n))
+})
+
+
+
+```
+
+
+
+
+
+#Find foxo1 regulators 
+```{r}
+foxo.ko.lo.A1.de <- read.csv('/oak/stanford/groups/satpathy/users/shared/evan_cart_foxo1_ko/output/all_lo_vs_A1_FDR005_Log2FC05.csv') %>% dplyr::filter(padj <= 0.05 & log2FoldChange <  -0.25) %>% tibble::rownames_to_column('SYMBOL') %>% dplyr::arrange(desc(abs(log2FoldChange)))
+#overlap foxo1 up gene in the overexpression an down gene in the ko
+ha.de.list$FOXO1WT_NGFR %>% as.data.frame() %>% tibble::rownames_to_column('SYMBOL') %>% dplyr::filter(padj <= 0.05 & log2FoldChange > 0.5)  -> ha.de.foxo1.ngfr.up
+cd19.de.list$FOXO1WT_NGFR %>% as.data.frame() %>% tibble::rownames_to_column('SYMBOL') %>% dplyr::filter(padj <= 0.05 & log2FoldChange > 0.5)  -> cd19.de.foxo1.ngfr.up
+
+ha.foxo1.regulated.genes <- intersect(foxo.ko.lo.A1.de$SYMBOL, ha.de.foxo1.ngfr.up$SYMBOL)
+cd19.foxo1.regulated.genes <- intersect(foxo.ko.lo.A1.de$SYMBOL, cd19.de.foxo1.ngfr.up$SYMBOL)
+library(dorothea)
+dorothea_hs %>%dplyr::filter(tf=='FOXO1' & mor >0) %>% pull(target) -> dorothea.foxo1.gene
+
+
+
+
+```
+
+
+
+
+```{r}
+#actually it has batch effect correction (bc)
+getEnrichmentScore.no.bc <- function(dds, gene_list){
+  rlg <- vst(dds, blind=F)
+  assay(rlg) <- limma::removeBatchEffect(assay(rlg), batch=dds$protocol)
+  assay(rlg) %>% as.data.frame() %>% tibble::rownames_to_column('gene_name') -> rlg.df
+  gene_means <- rowMeans(rlg.df %>% dplyr::select(-gene_name))
+  rlg.df %>% mutate(gene_means) %>% dplyr::select(gene_name, gene_means, dplyr::everything()) %>% dplyr::arrange(dplyr::desc(gene_means)) %>% dplyr::distinct(gene_name, .keep_all = TRUE) %>% dplyr::select( -gene_means) %>%   tibble::column_to_rownames('gene_name') %>% as.matrix() -> rlg.mat
+  gsva_results <- gsva(
+  rlg.mat,
+  gene_list,
+  method = "ssgsea",
+  # Appropriate for our vst transformed data
+  kcdf = "Gaussian",
+  # Minimum gene set size
+  min.sz = 15,
+  # Maximum gene set size
+  # Compute Gaussian-distributed scores
+  # Don't print out the progress bar
+  verbose = FALSE
+  )
+  
+  gsva_results %>% as.data.frame() %>% t() %>% melt() -> gsva_results
+  return(gsva_results)
+}
+```
+
+#plot heatmap
+
+```{r}
+
+plotDeRNAHeatmap <- function(dds, groupby=NULL, g1=NULL, g2='NULL', fdr=0.05, log2fc=0.5,km=4,  use_genes=NULL, bc_group='Group2'){
+  set.seed(123)
+  res.list <- lapply(g1,function(n){
+    tmp.df <- results(dds, contrast=c(groupby, n, g2)) %>% as.data.frame()%>% tibble::rownames_to_column('SYMBOL') %>% dplyr::filter(abs(log2FoldChange)>log2fc & padj < fdr)
+  })
+  plot_peaks <- lapply(res.list,function(x){x$SYMBOL}) %>% unlist() %>% unique()
+   if(!is.null(use_genes)){
+    plot_peaks <- intersect(plot_peaks, use_genes)
+  }
+  vst.tmp <- vst(dds,blind=F)
+  assay(  vst.tmp ) <- limma::removeBatchEffect(assay(  vst.tmp ), batch=  vst.tmp[[bc_group]])
+  mat <- assay(  vst.tmp )[plot_peaks,dds[[groupby]] %in% c(g1, g2)] %>%  ArchR:::.rowZscores()
+  dds[[groupby]] <- factor(dds[[groupby]], levels = c(g2, g1))
+  mat <- mat[,order(dds[[groupby]][dds[[groupby]] %in% c(g1, g2)])]
+  
+  pal_atac <- colorRampPalette( brewer.pal(11,'RdBu'))(100) %>% rev()
+  col.zscore <- colorRamp2(seq(-3, 3, by = 6/99), pal_atac)
+  
+  # ha = HeatmapAnnotation(df = data.frame("condition" = dds[[groupby]][dds[[groupby]] %in% c(g1, g2)]), 
+  #                        show_annotation_name = T,
+  #                        show_legend = T,
+  #                        annotation_name_side = "left",
+  #                        annotation_name_gp = gpar(fontsize = 6))
+  # 
+  ht_list <- 
+    Heatmap(mat,
+            name = "Row z-score", 
+            col = col.zscore,
+            column_names_gp = gpar(fontsize = 8),
+            show_column_names = T,
+            heatmap_legend_param = list(legend_direction = "horizontal",
+                                        labels_gp = gpar(fontsize = 12), 
+                                        title_gp = gpar(fontsize = 12)),
+            show_row_names = FALSE,
+            cluster_columns = F,
+            use_raster = TRUE,
+            raster_device = c("png"),
+            raster_quality = 2,
+            cluster_rows = T,
+            row_title = paste0(nrow(mat),
+                               " Differential RNA"),
+            #column_order = cols.order,
+            row_names_gp = gpar(fontsize = 4),
+            #top_annotation = ha,
+            #width = unit(15, "cm"),
+            #column_title = paste0("RNA-seq z-score (n = ", ncol(plot.exp),")"), 
+            column_title_gp = gpar(fontsize = 12), 
+            row_title_gp = gpar(fontsize = 12),
+            raster_by_magick = F, row_km = km)
+  ht_list <- draw(ht_list, column_title_gp = gpar(fontsize = 12, fontface = "bold"), heatmap_legend_side = "bottom",annotation_legend_side = "right")
+  return(list(unionRNA=plot_peaks, ht=ht_list))
+}
+```
+
+#GSEA foxo13a vs foxo1wt
+
+```{r}
+res.ha.FOXO13A_FOXOWT <- plotDEgenes(dds.HA, 'DE_HA', 'TF', 'FOXO13A', 'FOXO1WT')
+res.CD19.FOXO13A_FOXOWT <- plotDEgenes(dds.CD19, 'DE_CD19', 'TF', 'FOXO13A', 'FOXO1WT')
+
+msigdb_gene_sets <- msigdbr::msigdbr(
+  species = "Homo sapiens", # Can change this to what species you need
+  category = "C2", # Only hallmark gene sets
+)
+
+split(msigdb_gene_sets$gene_symbol, msigdb_gene_sets$gs_name) -> msigdb_gene_sets.list
+
+apoptosis.gene.set.list <-  msigdb_gene_sets.list[names(msigdb_gene_sets.list) %>% grep('apoptosis', .,ignore.case = T)]
+cc.gene.set.list <- msigdb_gene_sets.list[names(msigdb_gene_sets.list) %>% grep('CELL_CYCLE', .,ignore.case = T)]
+survival.gene.set.list <- msigdb_gene_sets.list[names(msigdb_gene_sets.list) %>% grep('SURVIVAL', .,ignore.case = T)]
+proliferation.gene.set.list <- msigdb_gene_sets.list[names(msigdb_gene_sets.list) %>% grep('PROLIFERATION', .,ignore.case = T)]
+
+
+
+ha.foxo13a.foxo1wt.gsea <- getGSEA(res.ha.FOXO13A_FOXOWT %>% as.data.frame(),survival.gene.set.list)
+
+cd19.foxo13a.foxo1wt.gsea <- getGSEA(res.CD19.FOXO13A_FOXOWT %>% as.data.frame(), survival.gene.set.list)
+
+cd19.foxo13a.foxo1wt.gsea$x$data %>% write.csv('./output/cd19.foxo13a.foxo1wt.gsea.survival.csv', quote = F)
+
+ha.foxo13a.foxo1wt.gsea$x$data %>% write.csv('./output/ha.foxo13a.foxo1wt.gsea.survival.csv', quote = F)
+
+pdf('./plots/GSEA.res.cd19.FOXO13A_FOXOWT.REACTOME_NF_KB_IS_ACTIVATED_AND_SIGNALS_SURVIVAL.pdf', width=8, height=4)
+plotGSEA(res.CD19.FOXO13A_FOXOWT  , survival.gene.set.list, 'REACTOME_NF_KB_IS_ACTIVATED_AND_SIGNALS_SURVIVAL')
+dev.off()
+```
+
+##function
+```{r}
+getGSEA <- function(res, pathways.hallmark){
+  res %>% as.data.frame() %>% rownames_to_column('SYMBOL') %>% dplyr::select(SYMBOL, stat) %>% 
+  na.omit(stat) %>% 
+  distinct() -> res
+  ranks <- deframe(res)
+  
+  fgseaRes <- fgsea::fgsea(pathways=pathways.hallmark, stats=ranks, eps=0)
+  fgseaResTidy <- fgseaRes %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+
+  # Show in a nice table:
+  fgseaResTidy %>% 
+  dplyr::select(-leadingEdge, -ES) %>% 
+  arrange(padj) %>% 
+  DT::datatable()
+}
+
+plotGSEA <- function(res, pathways.hallmark, name=NULL){
+  res %>% as.data.frame() %>% rownames_to_column('SYMBOL') %>% dplyr::select(SYMBOL, stat) %>% 
+  na.omit(stat) %>% 
+  distinct() -> res
+  ranks <- deframe(res)
+  
+  p <- plotEnrichment(pathways.hallmark[[name]], stats=ranks) + ggtitle(name)
+  return(p)
+}
+
+getMsigdbEnrichment.ht <- function(gene_list, category = "H", subcategory = NULL){
+  m_t2g <- msigdbr(species = "Homo sapiens", category = category, subcategory = subcategory) %>% 
+  dplyr::select(gs_name, entrez_gene)
+  gene.df <- bitr(gene_list, fromType = "SYMBOL", toType= "ENTREZID", OrgDb = org.Hs.eg.db)
+  em <- enricher(gene.df$ENTREZID, TERM2GENE=m_t2g, minGSSize = 5, pAdjustMethod = 'BH')
+  return(em)
+}
+
+
+```
+

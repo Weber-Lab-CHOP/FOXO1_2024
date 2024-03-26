@@ -1,0 +1,625 @@
+
+```{r setup}
+    knitr::opts_knit$set(root.dir = normalizePath('/oak/stanford/groups/satpathy/users/shared/evan_cart_10252020/')) 
+```
+
+
+```{r}
+library(ChrAccR)
+library(DESeq2)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(chromVAR)
+library(chromVARmotifs)
+library(BuenColors)
+library(motifmatchr)
+library(gridExtra)
+
+Sys.setenv(R_GSCMD='/oak/stanford/groups/satpathy/users/yhc/miniconda3/envs/r_env/bin/gs')
+
+```
+
+```{r}
+# dsa <- loadDsAcc('./evan_cart_atac_out/data/dsATAC_filtered')
+```
+```{r}
+# dds <- getDESeq2Dataset(dsa, regionType='peaks', designCols=c('Donor', 'sampleGroup'))
+```
+
+
+#get DEseq2 data from dsa
+```{r}
+# sample.tsv <- dsa@sampleAnnot
+# lookup.df <- read.table('./lookup_table2.csv', header=F)
+# colnames(lookup.df) <- c('orig_name', 'new_name')
+# dds <- dds[,lookup.df$orig_name]
+# colnames(dds) <- lookup.df$new_name
+# dds$sampleName <- colnames(dds)
+# tmp.df <- dds$sampleName %>% stringr::str_split_fixed('_',n = 3)
+# dds$cellType <- as.factor(tmp.df[,1])
+# dds$TF <- as.factor(tmp.df[,2])
+# dds$Donor <- as.factor(tmp.df[,3])
+# colData(dds) <- colData(dds)[,c("sampleId","sampleName","cellType","TF","Donor")]
+# design(dds) <- formula(~cellType+TF+cellType:TF+Donor)
+# dds <- DESeq(dds)
+```
+
+##correlation 
+
+```{r}
+library("RColorBrewer")
+library(pheatmap)
+vst <- vst(dds, blind=F)
+vst_mat <- assay(vst)
+vst_cor <- cor(vst_mat)
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(vst_cor, col=colors) -> p 
+#ggsave('./tmp3.png', p, height=10, width = 10)
+p
+```
+
+```{r}
+
+
+p1 <- plotPCA(vst, intgroup=c('Donor'), ntop=2000)+pretty_plot() + theme(aspect.ratio = 1)
+p2 <- plotPCA(vst, intgroup=c('cellType'), ntop=2000)+pretty_plot()+ theme(aspect.ratio = 1)
+p3 <- plotPCA(vst, intgroup=c('TF'), ntop=2000)+pretty_plot()+ theme(aspect.ratio = 1)
+
+pdf('./plots/vst_rename2_all_EDA.pdf', width=20, height = 5)
+plot_grid(p1,p2,p3, align='v', nrow=1, labels='auto')
+dev.off()
+```
+
+
+```{r}
+vst.bc <- vst
+assay(vst.bc) <- limma::removeBatchEffect(assay(vst.bc),batch=vst.bc$Donor)
+p1 <- plotPCA(vst.bc, intgroup=c('Donor'), ntop=2000)+pretty_plot() + theme(aspect.ratio = 1)
+p2 <- plotPCA(vst.bc, intgroup=c('cellType'), ntop=2000)+pretty_plot()+ theme(aspect.ratio = 1)
+p3 <- plotPCA(vst.bc, intgroup=c('TF'), ntop=2000)+pretty_plot()+ theme(aspect.ratio = 1)
+
+pdf('./plots/vst_bc_rename2_all_EDA.pdf', width=20, height = 5)
+plot_grid(p1,p2,p3, align='v', nrow=1, labels='auto')
+dev.off()
+
+```
+
+##QC plot after bc
+```{r}
+vst_cor.bc <- cor(assay(vst.bc))
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(vst_cor.bc, col=colors, clustering_distance_rows = 'pearson', clustering_distance_cols = 'pearson') -> p 
+#ggsave('./tmp3.png', p, height=10, width = 10)
+p
+```
+#motif deviation
+```{r}
+
+getMotifDev <- function(x, dsa){
+  
+  mat <- assay(vst(x, blind=F))
+  peak_se <- SummarizedExperiment(assays = SimpleList(counts=mat), rowData = getCoord(dsa, 'peaks'), colData = colData(x))
+  print('adding GC bias')
+  peak_se <- addGCBias(peak_se, 
+                              genome = BSgenome.Hsapiens.UCSC.hg38)
+  data("homer_pwms")
+
+  print('matching motifs')
+  motif_ix <- matchMotifs(homer_pwms, peak_se, 
+                          genome = BSgenome.Hsapiens.UCSC.hg38)
+  bg <- getBackgroundPeaks(object = peak_se)
+  print('computing deviation')
+  dev <- computeDeviations(object = peak_se, annotations = motif_ix,
+                           background_peaks = bg)
+  return(dev)
+}
+```
+
+```{r}
+motif.dev.all <- getMotifDev(dds, dsa)
+var.all <- computeVariability(motif.dev.all)
+```
+
+```{r}
+show_motif.df <- var.all %>% arrange(dplyr::desc(variability)) %>% head(100)
+mat <- rowZscores(assays(motif.dev.all)$z[show_motif.df %>% rownames(),])
+rownames(mat) <- show_motif.df$name
+pdf('./plots/dev_all_rename2.pdf', width = 8, height =  18)
+pheatmap(mat, cluster_rows = T, show_rownames = TRUE, cluster_cols = F, annotation_col = as.data.frame(colData(motif.dev.all)[,c('Donor', 'TF')]), labels_row = show_motif.df%>%pull(name)) 
+dev.off()
+
+```
+
+
+
+#CD19 analysis
+```{r}
+dds.cd19 <- dds[,dds$cellType=='CD19.28z']
+design(dds.cd19) <- formula(~TF+Donor)
+dds.cd19 <- DESeq(dds.cd19)
+vst.cd19 <- vst(dds.cd19, blind=F)
+
+```
+
+
+```{r}
+
+p1 <- plotPCA(vst.cd19, intgroup=c('Donor'), ntop=2000)+pretty_plot()+ theme(aspect.ratio = 1)
+p2 <- plotPCA(vst.cd19, intgroup=c('cellType'), ntop=2000)+pretty_plot()+ theme(aspect.ratio = 1)
+p3 <- plotPCA(vst.cd19, intgroup=c('TF'), ntop=2000)+pretty_plot()+ theme(aspect.ratio = 1)
+
+pdf('./plots/vst_rename2_cd19_EDA.pdf', width=20, height = 5)
+plot_grid(p1,p2,p3, align='v', nrow=1, labels='auto')
+dev.off()
+```
+
+
+```{r}
+vst.cd19.bc <- vst.cd19
+assay(vst.cd19.bc) <- limma::removeBatchEffect(assay(vst.cd19.bc),batch=vst.cd19.bc$Donor)
+p1 <- plotPCA(vst.cd19.bc, intgroup=c('Donor'), ntop=2000)+pretty_plot() + theme(aspect.ratio = 1)
+p2 <- plotPCA(vst.cd19.bc, intgroup=c('cellType'), ntop=2000)+pretty_plot()+ theme(aspect.ratio = 1)
+p3 <- plotPCA(vst.cd19.bc, intgroup=c('TF'), ntop=2000)+pretty_plot()+ theme(aspect.ratio = 1)
+
+pdf('./plots/vst.cd19_bc_rename2_all_EDA.pdf', width=20, height = 5)
+plot_grid(p1,p2,p3, align='v', nrow=1, labels='auto')
+dev.off()
+
+```
+
+
+```{r}
+cor.vst.cd19.bc <- dist(t(assay(vst.cd19.bc))) %>% as.matrix()
+
+pdf('./plots/cd19_cor_heatmap.pdf', width = 8, height=6)
+pheatmap(cor.vst.cd19.bc , col=colors , clustering_distance_rows = 'correlation', clustering_distance_cols = 'correlation')
+dev.off()
+
+```
+
+```{r}
+motif.dev.cd19 <- getMotifDev(dds.cd19, dsa)
+var.cd19 <- computeVariability(motif.dev.cd19)
+```
+
+```{r}
+pal <- list('Donor' = c("1"="#5E4FA2", "2"="#3F96B7","3"="#88CFA4","4"= "#D7EF9B"),
+            'TF' = c('NGFR'="#9A8822", 'TCF1'="#F5CDB4",'FOXO1-WT'="#F8AFA8"))
+show_motif.df <- var.cd19 %>% dplyr::arrange(desc(variability)) %>% head(20)
+tmp.mat <- assays(motif.dev.cd19)$z[show_motif.df %>% rownames(),] %>% rowZscores()%>% t() %>% as.data.frame()%>% tibble::rownames_to_column('sample') %>% mutate(group=gsub('_\\d$','',sample)) 
+tmp.name <- tmp.mat$group %>% unique()
+lapply(tmp.name, function(n){
+  tmp.df <- tmp.mat[tmp.mat$group == n,]
+  tmp.df[,c(-1, -ncol(tmp.df))] %>% apply(2, function(x){median(x)})
+}) %>% do.call(cbind, .) -> out.mat 
+colnames(out.mat) <- tmp.name
+#mat <- rowZscores(assays(motif.dev.cd19)$z[show_motif.df %>% rownames(),])[,c("CD19.28z_NGFR_1","CD19.28z_NGFR_3","CD19.28z_NGFR_4", "CD19.28z_TCF1_1","CD19.28z_TCF1_3", "CD19.28z_TCF1_4", "CD19.28z_FOXO1-WT_1", "CD19.28z_FOXO1-WT_2", "CD19.28z_FOXO1-WT_3")]
+
+
+mat <- out.mat[, c('CD19.28z_NGFR', 'CD19.28z_TCF1', 'CD19.28z_FOXO1-WT')]
+
+
+pheatmap(mat, labels_row = show_motif.df%>%pull(name),show_rownames = TRUE, cluster_col=F, show_colnames = T)
+
+
+
+```
+
+
+
+#HA analysis
+
+```{r}
+dds.ha <- dds[,dds$cellType=='HA.28z']
+design(dds.ha) <- formula(~TF+Donor)
+dds.ha <- DESeq(dds.ha)
+vst.ha <- vst(dds.ha, blind=F)
+
+```
+```{r}
+
+r.dend <-  row_dend(dds.ha.no13a.ht.list$ht)
+rcl.list <- row_order(dds.ha.no13a.ht.list$ht)
+union.peaks.gr <- rowRanges(dds.ha)[dds.ha.no13a.ht.list$unionPeak]
+rcl.peak.list <- lapply(rcl.list, function(x){union.peaks.gr[x]})
+names(rcl.peak.list) <- paste0('group_', 1:3)
+rcl.peak.list <- GRangesList(rcl.peak.list)
+
+# 
+# $group_1
+# [1] 2911
+# 
+# $group_2
+# [1] 3239
+# 
+# $group_3
+# [1] 1884
+```
+
+
+
+```{r}
+p1<-plotPCA(vst.ha, intgroup=c('Donor'), ntop=2000)+pretty_plot()+ theme(aspect.ratio = 1)
+p2<-plotPCA(vst.ha, intgroup=c('cellType'), ntop=2000)+pretty_plot()+ theme(aspect.ratio = 1)
+p3<-plotPCA(vst.ha, intgroup=c('TF'), ntop=2000)+pretty_plot()+ theme(aspect.ratio = 1)
+pdf('./plots/vst_rename2_ha_EDA.pdf', width=20, height = 5)
+plot_grid(p1,p2,p3, align='v', nrow=1, labels='auto')
+dev.off()
+```
+
+
+
+
+```{r}
+vst.ha.bc <- vst.ha
+assay(vst.ha.bc) <- limma::removeBatchEffect(assay(vst.ha.bc),batch=vst.ha.bc$Donor)
+p1 <- plotPCA(vst.ha.bc, intgroup=c('Donor'), ntop=2000)+pretty_plot() + theme(aspect.ratio = 1)
+p2 <- plotPCA(vst.ha.bc, intgroup=c('cellType'), ntop=2000)+pretty_plot()+ theme(aspect.ratio = 1)
+p3 <- plotPCA(vst.ha.bc, intgroup=c('TF'), ntop=2000)+pretty_plot()+ theme(aspect.ratio = 1)
+
+pdf('./plots/vst.ha_bc_rename2_all_EDA.pdf', width=20, height = 5)
+plot_grid(p1,p2,p3, align='v', nrow=1, labels='auto')
+dev.off()
+```
+
+
+```{r}
+
+cor.vst.ha.bc <- dist(t(assay(vst.ha.bc))) %>% as.matrix()
+
+pdf('./plots/ha_cor_heatmap.pdf', width = 8, height=6)
+pheatmap(cor.vst.ha.bc , col=colors , clustering_distance_rows = 'correlation', clustering_distance_cols = 'correlation')
+dev.off()
+
+```
+
+```{r}
+motif.dev.ha <- getMotifDev(dds.ha, dsa)
+var.ha <- computeVariability(motif.dev.ha)
+```
+
+```{r}
+pal <- list('Donor' = c("1"="#5E4FA2", "2"="#3F96B7","3"="#88CFA4","4"= "#D7EF9B"),
+            'TF' = c('NGFR'="#9A8822", 'TCF1'="#F5CDB4",'FOXO1-WT'="#F8AFA8"))
+show_motif.df <- var.ha %>% dplyr::arrange(desc(variability)) %>% head(20)
+
+tmp.mat <- assays(motif.dev.ha)$z[show_motif.df %>% rownames(),] %>% rowZscores()%>% t() %>% as.data.frame()%>% tibble::rownames_to_column('sample') %>% mutate(group=gsub('_\\d$','',sample)) 
+tmp.name <- tmp.mat$group %>% unique()
+lapply(tmp.name, function(n){
+  tmp.df <- tmp.mat[tmp.mat$group == n,]
+  tmp.df[,c(-1, -ncol(tmp.df))] %>% apply(2, function(x){mean(x)})
+}) %>% do.call(cbind, .) -> out.mat 
+colnames(out.mat) <- tmp.name
+
+
+mat <- out.mat[, c('HA.28z_NGFR', 'HA.28z_TCF1', 'HA.28z_FOXO1-WT')]
+
+
+pdf('./plots/dev_ha_no13a_top_20_rename2_mean.pdf', width = 4, height =  15)
+#pheatmap(mat, cluster_rows = T, show_rownames = TRUE, cluster_cols = F, labels_row = show_motif.df%>%pull(name), clustering_distance_cols = 'pearson',clustering_distance_rows = 'pearson' ) 
+pheatmap(mat, labels_row = show_motif.df%>%pull(name),show_rownames = TRUE, cluster_col=F, show_colnames = T)
+dev.off()
+
+```
+
+
+
+#get differential peaks (P value for ATAC due to sample variability)
+```{r}
+getDiffPeaks <- function(dds, dsa, group1, group2, p_cutoff=0.05){
+  coords <- getCoord(dsa, 'peaks')
+  diffPeaks <- results(dds, contrast = c('TF', group1, group2)) %>% as.data.frame()
+ coords@elementMetadata %>% cbind(.,diffPeaks)-> coords@elementMetadata
+ coords <- coords[!is.na(coords$padj)]
+ out.coords <- coords[coords$pvalue<=p_cutoff]
+  return(out.coords[order(out.coords$log2FoldChange, decreasing = T)])
+}
+```
+
+
+```{r}
+diff.peak.list <- list(cd19.foxo1.ngfr=getDiffPeaks(dds.cd19, dsa, 'FOXO1-WT', 'NGFR'),
+                       cd19.tcf1.ngfr=getDiffPeaks(dds.cd19, dsa, 'TCF1', 'NGFR'),
+                       ha.foxo1.ngfr=getDiffPeaks(dds.ha, dsa, 'FOXO1-WT', 'NGFR'),
+                       ha.tcf1.ngfr=getDiffPeaks(dds.ha, dsa, 'TCF1', 'NGFR'))
+
+diff.peak.list.up <- lapply(diff.peak.list, function(gr){gr[gr$log2FoldChange>0]})
+
+
+#saveRDS(diff.peak.list, './data/diff.peak.list.rds')
+```
+
+#bar plots for vis peak 
+```{r}
+tmp.df <-  lapply(diff.peak.list,length) %>% do.call(cbind,.) %>% rbind(lapply(diff.peak.list.up,function(x){length(x[abs(x$log2FoldChange)>0.5])}) %>% do.call(cbind,.))
+tmp.df[1,] <- tmp.df[1,]-tmp.df[2,]
+colnames(tmp.df) <- c('cd19.foxo1', 'cd19.tcf1', 'ha.foxo1', 'ha.tcf1')
+tmp.df <- tmp.df[,c(3,1,2,6,4,5)]
+rownames(tmp.df) <- c('neg', 'pos')
+tmp.df[1,]<- -tmp.df[1,]
+tmp.df %>% t() %>% as.data.frame()-> tmp.df
+tmp.df$id <- rownames(tmp.df)
+tmp.df %>% melt(id.vars=c('id')) -> tmp.df
+tmp.df %>% mutate(group=gsub('\\..*', '', id)) %>% mutate(tf=gsub('.*\\.','',id))-> tmp.df
+p <- tmp.df %>% ggbarplot(x='tf', y='value', fill='variable', facet.by = 'group', label = T,label.pos = "in") 
+
+ggsave('./plots/diff_peaks_all_p005.pdf', p, width=8, height=8)
+```
+
+#get motif enrichemnt with fisher exact test 
+```{r}
+lapply(names(diff.peak.list.up), function(n){
+  x <- diff.peak.list[[n]]
+  x <- x[x$log2FoldChange>0.5]
+  getMotifEnrichment(dsa, type='peaks', idx=match(x$name, coords@elementMetadata$name), motifs='homer')
+}) -> diff.peaks.motif
+names(diff.peaks.motif ) <- names(diff.peak.list)
+
+lapply(diff.peaks.motif, function(x){
+  x %>% mutate(motif=gsub('/.*','',motif)) -> x
+  return(x)
+}) -> diff.peaks.motif
+#saveRDS(diff.peaks.motif, file = './data/diff.peask.pval.motif.rds')
+
+plot_motif_enrichment <- function(motifsUp){
+  df <- data.frame(TF = motifsUp$motif, mlog10Padj = -log10(motifsUp$pVal))
+  df <- df[order(df$mlog10Padj, decreasing = TRUE),]
+  df$rank <- seq_len(nrow(df))
+  
+  ggUp <- ggplot(df, aes(rank, mlog10Padj, color = mlog10Padj)) + 
+  geom_point(size = 1) +
+  ggrepel::geom_text_repel(
+        data = df[rev(seq_len(30)), ], aes(x = rank, y = mlog10Padj, label = TF), 
+        size = 2,
+        nudge_x = 2,
+        color = "black"
+  ) + pretty_plot()+
+  ylab("-log10(P value) Motif Enrichment") + 
+  xlab("Rank Sorted TFs Enriched") +
+  scale_color_gradientn(colors = paletteContinuous(set = "comet")) + theme(aspect.ratio = 1)
+  return(ggUp)
+}
+
+lapply(names(diff.peaks.motif), function(n){
+    p <- plot_motif_enrichment(diff.peaks.motif[[n]])+ggtitle(n)
+  ggsave(file=paste0('./plots/knee_plot_', n,'_motif_pval.pdf'), p, width=8,height=8)
+})
+
+```
+
+
+#annotate foxo1 up peaks and annotate
+```{r}
+library(ChIPseeker)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(clusterProfiler)
+library(EnsDb.Hsapiens.v86)
+txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
+
+lapply(diff.peak.list.up, function(x){
+  peakAnno <- annotatePeak(x, tssRegion=c(-20000, 20000),
+                         TxDb=txdb, annoDb="org.Hs.eg.db")
+  return(peakAnno)
+}) -> diff.peak.list.up.anno
+
+lapply(names(diff.peak.list.up.anno), function(n){
+  x <- diff.peak.list.up.anno[[n]]
+  x@anno[ x@anno$log2FoldChange >0]$annotation %>% gsub(' \\(.*','',.) %>% table() %>% as.data.frame() -> tmp.df
+colnames(tmp.df) <- c('Feature', 'Freq')
+
+tmp.df %>% mutate(feature='feature') %>% dplyr::filter(Feature %in% c('Promoter', 'Intron', 'Exon', '3\' UTR', '5\' UTR', 'Distal Intergenic')) %>% ggplot(aes(y=Freq,x=feature, fill=Feature))+geom_bar(position="fill", stat="identity", width = 0.3)+scale_fill_viridis(discrete = T) +pretty_plot() + theme(aspect.ratio =2) + ggtitle(n) -> tmp.plot
+  ggsave(paste0('./plots/diff_peak_pval_anno_', n,'.pdf'),tmp.plot, width=6, height=4)
+  
+
+
+
+})
+
+
+lapply(diff.peak.list, function(x){
+  peakAnno <- annotatePeak(x, tssRegion=c(-20000, 20000),
+                         TxDb=txdb, annoDb="org.Hs.eg.db")
+  return(peakAnno)
+}) -> diff.peak.list.anno
+```
+
+#get annotated genes in diff peaks 
+```{r}
+lapply(names(diff.peak.list.anno), function(x){
+  diff.peak.list.anno[[x]] %>% as.data.frame()%>%dplyr::select(c(seqnames, start, end, log2FoldChange, padj, SYMBOL)) %>% arrange(desc(log2FoldChange)) -> df
+  df %>% write.csv(paste0('./output/diff_peak_pval_nearest_gene_', x, '.csv'), row.names = F, quote = F)
+  return(df)
+}) -> diff.peak.nearest.gene
+names(diff.peak.nearest.gene) <- names(diff.peak.list.anno)
+
+```
+
+#plot genes volcano 
+```{r}
+library(EnhancedVolcano)
+lapply(names(diff.peak.list.anno), function(x){
+
+  p<-EnhancedVolcano(diff.peak.nearest.gene[[x]],
+                lab=diff.peak.nearest.gene[[x]]$SYMBOL,
+                x='log2FoldChange',
+                y='padj',
+                FCcutoff = 0.25,
+                pCutoff = 0.05, pointSize =  1, labSize = 3, title = x)  
+  ggsave(paste0('./plots/vol_diff_peak_pval_nearest_gene_', x,'.pdf'), p,height=15, width  =15)
+})
+
+```
+
+```{r}
+plotTornado <- function(features, bw.files, fname){
+  wid <- width(features)
+  feature.recentered <- feature.center <- features
+  start(feature.center) <- start(features) + floor(wid/2)
+  width(feature.center) <- 1
+  start(feature.recentered) <- start(feature.center) - 2000
+  end(feature.recentered) <- end(feature.center) + 2000
+  
+  cvglists <- sapply(bw.files, import,
+                       format="BigWig",
+                       which=feature.recentered,
+                       as="RleList")
+  
+  names(cvglists) <- names(bw.files)
+  
+  sig <- featureAlignedSignal(cvglists, feature.center,
+                            upstream=1000, downstream=1000, n.tile = 200)
+  pdf(paste0('./plots/',fname,'_histogram.pdf'), width=12, height=8)
+  featureAlignedDistribution(sig, feature.center,
+                           upstream=1000, downstream=1000,
+                           type="l", n.tile = 200) -> tmp.density
+  dev.off()
+  
+  feats <- features
+  
+  bws <- BigWigFileList(bw.files)
+  pdf(paste0('./plots/',fname,'_tornado.pdf'), width=12, height=12)
+  tornado_plot(features = feats, data = bws,width = 2000, upper='q0.99',lower='q0.01')
+  dev.off()
+
+}
+```
+
+#tornado plot of foxo1-wt specific peaks 
+```{r}
+
+#3055 peaks
+bw.files.cd19 <- list.files('./output/grouped_bw_5bp', full.names = T, pattern = '*group_CD19.28z*')
+names(bw.files.cd19 ) <- bw.files.cd19 %>% basename() %>% gsub('_TileSize-5_NormMethod-ReadsInTSS.bw','',.)
+plotTornado(diff.peak.list.up$cd19.foxo1.ngfr[diff.peak.list.up$cd19.foxo1.ngfr$log2FoldChange>0.5], bw.files.cd19, 'cd19_foxo1_peaks')
+
+#3121 peaks
+bw.files.ha <- list.files('./output/grouped_bw_5bp', full.names = T, pattern = '*group_HA.28z*')
+names(bw.files.ha ) <- bw.files.ha %>% basename() %>% gsub('_TileSize-5_NormMethod-ReadsInTSS.bw','',.)
+plotTornado(diff.peak.list.up$ha.foxo1.ngfr[diff.peak.list.up$ha.foxo1.ngfr$log2FoldChange>0.5], bw.files.ha, 'ha_foxo1_peaks')
+```
+
+#gchromvar enrichment of cell type specific peaks from tex studies 
+```{r}
+library(gchromVAR)
+library(liftOver)
+library(rtracklayer)
+#liftover
+path = system.file(package="liftOver", "extdata", "hg19ToHg38.over.chain")
+ch <- import.chain(path)
+lapply(list.files('./data/Tex_OCRs/', full.names = T), function(n){
+  df <- read.table(n)
+  gr <- makeGRangesFromDataFrame(df, keep.extra.columns = T, seqnames.field = 'V1', start.field = 'V2', end.field = 'V3', ignore.strand = T)
+  seqlevelsStyle(gr) <- "UCSC" 
+  gr_38 <- liftOver(gr, ch) %>% unlist()
+  genome(gr_38) <- 'hg38'
+  #gr_38$V5 <- 1
+  gr_38 %>% as.data.frame() %>% dplyr::select(c(seqnames, start, end, V4, V5)) %>% write.table(paste0('./data/Tex_OCRs_hg38/', basename(n)), quote = F, col.names = F, row.names = F, sep = '\t')
+})
+
+getCD8score <- function(dds){
+  #make a summarizedExperiment object with raw atac peak (row) by sample (column) count matrix 
+  se_mel <- SummarizedExperiment(assays=list(counts = counts(dds)),
+                               rowData = rowRanges(dds),
+                               colData = colData(dds))
+  #"FDR <= 0.01 & Log2FC >= 1" peaks from PMID: 31375813
+  cd8_fc <- importBedScore(rowRanges(se_mel), list.files("./data/Tex_OCRs_hg38/", full.names = TRUE, pattern = "*.bed$"))
+  se_mel <- addGCBias(se_mel, genome = BSgenome.Hsapiens.UCSC.hg38)
+  bg <- getBackgroundPeaks(se_mel)
+  dev <- computeWeightedDeviations(se_mel, cd8_fc, background_peaks = bg)
+  outdf <- melt(t(assays(dev)[["z"]]))
+  colnames(outdf) <- c("Celltype", "Trait", "Z")
+  return(outdf)
+}
+
+cd19.cd8.score <- getCD8score(dds.cd19)
+cd19.cd8.score %>% mutate(group=gsub('CD19.28z_','',Celltype) %>% gsub('_\\d$','',.)) %>% dplyr::filter(group %in% c('FOXO1-WT', 'NGFR') & Trait %in% c('N_CD8', 'Eff_CD8', 'Term_Tex')) %>% mutate(Trait=factor(Trait, levels = c('N_CD8', 'Eff_CD8', 'Term_Tex'))) -> cd19.cd8.score.print
+ha.cd8.score <- getCD8score(dds.ha)
+ha.cd8.score %>% mutate(group=gsub('HA.28z_','',Celltype) %>% gsub('_\\d$','',.)) %>% dplyr::filter(group %in% c('FOXO1-WT', 'NGFR') & Trait %in% c('N_CD8', 'Eff_CD8', 'Term_Tex')) %>% mutate(Trait=factor(Trait, levels = c('N_CD8', 'Eff_CD8', 'Term_Tex'))) -> ha.cd8.score.print
+
+cd19.cd8.score %>% write.csv('./output/atac_cd19.cd8.score.csv', row.names = F, quote = F)
+ha.cd8.score %>% write.csv('./output/atac_ha.cd8.score.csv', row.names = F, quote = F)
+
+```
+
+```{r}
+pdf('./plots/T_cell_phenotype-cd19.pdf', width=10, height=6)
+cd19.cd8.score.print %>%mutate(Celltype=gsub('_\\d', '', Celltype)) %>%mutate(Celltype=factor(Celltype,level=c('CD19.28z_NGFR', 'CD19.28z_TCF1', 'CD19.28z_FOXO1-WT')))%>% mutate(group=factor(group, levels=c('NGFR', 'FOXO1-WT')))%>% ggplot(aes(x=Trait, y=Z, fill=group)) + geom_boxplot(position=position_dodge(.6), width=0.5) + pretty_plot() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + scale_fill_manual(values=c("#999999", "#E69F00", "#56B4E9")) 
+dev.off()
+```
+
+```{r}
+pdf('./plots/T_cell_phenotype-ha.pdf', width=10, height=6)
+ha.cd8.score.print %>%mutate(Celltype=gsub('_\\d', '', Celltype)) %>%mutate(Celltype=factor(Celltype,level=c('HA.28z_NGFR', 'HA.28z_TCF1', 'HA.28z_FOXO1-WT'))) %>% mutate(group=factor(group, levels=c('NGFR', 'FOXO1-WT')))%>% ggplot(aes(x=Trait, y=Z, fill=group)) + geom_boxplot(position=position_dodge(.6), width=0.5) + pretty_plot() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + scale_fill_manual(values=c("#999999", "#E69F00", "#56B4E9")) 
+dev.off()
+
+
+t.test(ha.cd8.score.print[ha.cd8.score.print$group=='NGFR' & ha.cd8.score.print$Trait == 'Term_Tex',]$Z, ha.cd8.score.print[ha.cd8.score.print$group=='FOXO1-WT' & ha.cd8.score.print$Trait == 'Term_Tex',]$Z, alternative = 'greater')
+t.test(ha.cd8.score.print[ha.cd8.score.print$group=='NGFR' & ha.cd8.score.print$Trait == 'Eff_CD8',]$Z, ha.cd8.score.print[ha.cd8.score.print$group=='FOXO1-WT' & ha.cd8.score.print$Trait == 'Eff_CD8',]$Z, alternative = 'greater')
+t.test(ha.cd8.score.print[ha.cd8.score.print$group=='NGFR' & ha.cd8.score.print$Trait == 'N_CD8',]$Z, ha.cd8.score.print[ha.cd8.score.print$group=='FOXO1-WT' & ha.cd8.score.print$Trait == 'N_CD8',]$Z, alternative = 'greater')
+```
+
+
+
+
+
+
+
+#plot haatmap
+```{r}
+plotDePeakHeatmap <- function(dds,groupby=NULL, g1=NULL, g2='NULL', pval=0.05, log2fc=0.5,km=4,batchGroup=NULL){
+  set.seed(123)
+  res.list <- lapply(g1,function(n){
+    tmp.gr <- getDiffPeaks(dds, groupby, n, g2, pval_cutoff=pval)
+    print(paste0(n, '_up: ', length(tmp.gr[tmp.gr$log2FoldChange >log2fc]), ' down: ',length(tmp.gr[tmp.gr$log2FoldChange < -log2fc])))
+    return(tmp.gr[abs(tmp.gr$log2FoldChange) > log2fc])
+    
+  })
+  plot_peaks <- lapply(res.list,function(x){names(x)}) %>% unlist() %>% unique()
+  
+  vst.tmp <- vst(dds,blind=F)
+  assay(  vst.tmp ) <- limma::removeBatchEffect(assay(  vst.tmp ), batch=  vst.tmp[[batchGroup]])
+  mat <- assay(  vst.tmp )[plot_peaks,] 
+  mat <- mat[,dds[[groupby]] %in% c(g1, g2)]%>%  ArchR:::.rowZscores()
+  dds[[groupby]] <- factor(dds[[groupby]], levels = c(g2, g1))
+  mat <- mat[,order(dds[[groupby]][dds[[groupby]] %in% c(g1, g2)])]
+  
+  pal_atac <- colorRampPalette( brewer.pal(11,'RdBu'))(100) %>% rev()
+  col.zscore <- colorRamp2(seq(-3, 3, by = 6/99), pal_atac)
+
+  
+  # ha = HeatmapAnnotation(df = data.frame("condition" = dds[[groupby]][dds[[groupby]] %in% c(g1, g2)]), 
+  #                        show_annotation_name = T,
+  #                        show_legend = T,
+  #                        annotation_name_side = "left",
+  #                        annotation_name_gp = gpar(fontsize = 6))
+  # 
+  ht_list <- 
+    Heatmap(mat,
+            name = "Row z-score", 
+            col = col.zscore,
+            column_names_gp = gpar(fontsize = 8),
+            show_column_names = T,
+            heatmap_legend_param = list(legend_direction = "horizontal",
+                                        labels_gp = gpar(fontsize = 12), 
+                                        title_gp = gpar(fontsize = 12)),
+            show_row_names = FALSE,
+            cluster_columns = F,
+            use_raster = TRUE,
+            raster_device = c("png"),
+            raster_quality = 2,
+            cluster_rows = T,
+            row_title = paste0(nrow(mat),
+                               " Differential peaks"),
+            #column_order = cols.order,
+            row_names_gp = gpar(fontsize = 4),
+            #top_annotation = ha,
+            #width = unit(15, "cm"),
+            #column_title = paste0("RNA-seq z-score (n = ", ncol(plot.exp),")"), 
+            column_title_gp = gpar(fontsize = 12), 
+            row_title_gp = gpar(fontsize = 12),
+            raster_by_magick = F, row_km = km)
+  ht_list <- draw(ht_list, column_title_gp = gpar(fontsize = 12, fontface = "bold"), heatmap_legend_side = "bottom",annotation_legend_side = "right")
+  return(list(unionPeak=plot_peaks, ht=ht_list))
+}
+
+```
+
